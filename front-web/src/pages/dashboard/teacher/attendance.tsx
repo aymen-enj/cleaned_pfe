@@ -1,168 +1,133 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 import { User } from "../../../types/auth";
 import { TeacherLayout } from "../../../components/dashboard/layout/teacher-layout";
-import { Calendar, Clock, Search, CheckCircle2, XCircle, Download, Plus, Bell, Check, X } from "lucide-react";
+// 1. CORRECTION : AJOUT DES ICÔNES MANQUANTES (Percent, Clock)
+import { Calendar, Check, CheckCircle2, Download, Edit, Plus, Users, UserCheck, UserX, Bell, X, Percent, Clock } from "lucide-react";
+import toast from 'react-hot-toast';
 
-interface TeacherAttendanceProps {
-  user: User
-}
+// --- TYPES/INTERFACES ---
+interface ClassFromDB { id: string; name: string; }
+interface StudentFromDB { id: string; firstName: string; lastName: string; }
+interface ClassWithStatus extends ClassFromDB { totalStudents: number; presentCount: number; isCompleted: boolean; }
+interface DashboardStats { totalClasses: number; presentToday: number; absentToday: number; attendanceRate: number; }
+interface TeacherAttendanceProps { user: User; }
 
-interface Student {
-  id: number;
-  firstName: string;
-  lastName: string;
-  status: 'pending' | 'present' | 'absent';
-}
+// --- SOUS-COMPOSANT POUR L'UI : SQUELETTE DE CHARGEMENT ---
+const SkeletonLoader = ({ className }: { className?: string }) => (
+  <div className={`animate-pulse bg-gray-200 rounded-md ${className}`} />
+);
 
-interface Class {
-  id: number;
-  name: string;
-  students: Student[];
-}
-
-// Mock data - replace with your actual data
-const classes: Class[] = [
-  {
-    id: 1,
-    name: "Mathematics 101",
-    students: [
-      { id: 1, firstName: "John", lastName: "Doe", status: 'pending' },
-      { id: 2, firstName: "Jane", lastName: "Smith", status: 'pending' },
-      { id: 3, firstName: "Alice", lastName: "Johnson", status: 'pending' },
-    ]
-  },
-  {
-    id: 2,
-    name: "Physics 201",
-    students: [
-      { id: 4, firstName: "Bob", lastName: "Wilson", status: 'pending' },
-      { id: 5, firstName: "Carol", lastName: "Brown", status: 'pending' },
-      { id: 6, firstName: "David", lastName: "Miller", status: 'pending' },
-    ]
-  }
-];
-
+// --- COMPOSANT PRINCIPAL ---
 export default function TeacherAttendance({ user }: TeacherAttendanceProps) {
+  // --- STATES ---
   const [showTakeAttendance, setShowTakeAttendance] = useState(false);
-  const [selectedClass, setSelectedClass] = useState<Class | null>(null);
-  const [studentsAttendance, setStudentsAttendance] = useState<Student[]>([]);
+  const [selectedClass, setSelectedClass] = useState<ClassFromDB | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [classes, setClasses] = useState<ClassFromDB[]>([]);
+  const [students, setStudents] = useState<StudentFromDB[]>([]);
+  const [attendanceStatus, setAttendanceStatus] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
+  const [stats, setStats] = useState<DashboardStats>({ totalClasses: 0, presentToday: 0, absentToday: 0, attendanceRate: 0 });
+  const [classesWithStatus, setClassesWithStatus] = useState<ClassWithStatus[]>([]);
 
-  const handleClassSelect = (classItem: Class) => {
+  const todayFormatted = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'full' }).format(new Date());
+
+  // --- LOGIQUE DE DONNÉES (useEffect) ---
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      if (!showTakeAttendance) {
+        const { data: teacherClasses } = await supabase.from('classes').select('id, name');
+        const { data: allEnrollments } = await supabase.from('class_enrollments').select('class_id');
+        const { data: todaysAttendance } = await supabase.from('attendance').select('class_id, status').eq('date', new Date().toISOString().slice(0, 10));
+
+        const combinedData = (teacherClasses || []).map(c => {
+          const enrollmentsForClass = (allEnrollments || []).filter(e => e.class_id === c.id);
+          const attendanceForClass = (todaysAttendance || []).filter(a => a.class_id === c.id);
+          const presentCount = attendanceForClass.filter(a => a.status === 'present').length;
+          return { id: c.id, name: c.name, totalStudents: enrollmentsForClass.length, presentCount, isCompleted: attendanceForClass.length > 0 };
+        });
+        setClassesWithStatus(combinedData);
+
+        const totalPresent = (todaysAttendance || []).filter(a => a.status === 'present').length;
+        const totalAbsent = (todaysAttendance || []).filter(a => a.status === 'absent').length;
+        const rate = (totalPresent + totalAbsent) > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent)) * 100) : 0;
+        setStats({ totalClasses: (teacherClasses || []).length, presentToday: totalPresent, absentToday: totalAbsent, attendanceRate: rate });
+      } else {
+        const { data } = await supabase.from('classes').select('id, name');
+        if (data) setClasses(data);
+      }
+      setLoading(false);
+    };
+    fetchData();
+  }, [showTakeAttendance]);
+
+  // --- FONCTIONS (HANDLERS) ---
+  const handleClassSelect = async (classItem: ClassFromDB) => {
     setSelectedClass(classItem);
-    setStudentsAttendance(classItem.students);
+    setLoadingStudents(true);
+    setStudents([]);
+    setAttendanceStatus({});
+    const { data: enrollments } = await supabase.from('class_enrollments').select('student_id').eq('class_id', classItem.id);
+    if (!enrollments || enrollments.length === 0) { setLoadingStudents(false); return; }
+    const studentIds = enrollments.map(e => e.student_id);
+    const { data: profiles } = await supabase.from('profiles').select('id, first_name, last_name').in('id', studentIds);
+    if (profiles) setStudents(profiles.map(p => ({ id: p.id, firstName: p.first_name || '', lastName: p.last_name || '' })));
+
+    const { data: todaysAttendance } = await supabase.from('attendance').select('student_id, status').eq('class_id', classItem.id).eq('date', new Date().toISOString().slice(0, 10));
+    if (todaysAttendance) {
+      const statusMap = todaysAttendance.reduce((acc, record) => {
+        acc[record.student_id] = record.status as 'present' | 'absent' | 'late';
+        return acc;
+      }, {} as Record<string, 'present' | 'absent' | 'late'>);
+      setAttendanceStatus(statusMap);
+    }
+    setLoadingStudents(false);
   };
 
-  const handleAttendanceStatus = (studentId: number, status: 'present' | 'absent') => {
-    setStudentsAttendance(prev => 
-      prev.map(student => 
-        student.id === studentId ? { ...student, status } : student
-      )
-    );
-  };
+  const handleAttendanceStatus = async (studentId: string, status: 'present' | 'absent' | 'late') => {
+    if (!selectedClass) return;
+    setAttendanceStatus(prev => ({ ...prev, [studentId]: status }));
 
-  const handleNotify = (studentId: number) => {
-    // Implement notification logic here
-    console.log(`Notifying student ${studentId}'s parents`);
-  };
+    // 2. CORRECTION : On utilise la méthode await + toast manuels
+    const toastId = toast.loading('Saving...'); // Affiche "Saving..."
 
+    const { error } = await supabase.from('attendance').upsert({ date: new Date().toISOString().slice(0, 10), status, class_id: selectedClass.id, student_id: studentId }, { onConflict: 'date,class_id,student_id' });
+
+    toast.dismiss(toastId); // On retire le message "Saving..."
+    
+    if (error) {
+      toast.error('Could not save. Please try again.');
+      console.error("Error saving attendance:", error);
+    } else {
+      toast.success('Attendance saved!');
+    }
+  };
+  
+  const handleNotify = (studentId: string) => toast(`Notifying parents of student ${studentId}...`);
+
+  // --- AFFICHAGE (RENDER) ---
   if (showTakeAttendance) {
     return (
       <TeacherLayout user={user}>
         <div className="p-6 space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Take Attendance</h1>
-              <p className="mt-1 text-sm text-gray-500">
-                Mark attendance for your class
-              </p>
+              <div className="mt-2 flex items-center gap-2 text-sm font-medium text-gray-600"><Calendar className="h-4 w-4" /><span>{todayFormatted}</span></div>
             </div>
-            <button
-              title="Select another class"
-              onClick={() => setShowTakeAttendance(false)}
-              className="flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Back to Overview
-            </button>
+            <button onClick={() => { setSelectedClass(null); setShowTakeAttendance(false); }} className="flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">Back to Overview</button>
           </div>
-
           {!selectedClass ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {classes.map((classItem) => (
-                <div
-                  key={classItem.id}
-                  onClick={() => handleClassSelect(classItem)}
-                  className="cursor-pointer rounded-lg border bg-white p-6 hover:border-blue-500 transition-colors"
-                >
-                  <h3 className="font-medium text-gray-900">{classItem.name}</h3>
-                  <p className="mt-1 text-sm text-gray-500">{classItem.students.length} students</p>
-                </div>
-              ))}
+              {loading ? Array.from({ length: 3 }).map((_, i) => <SkeletonLoader key={i} className="h-28 rounded-lg" />) : classes.map((c) => (<div key={c.id} onClick={() => handleClassSelect(c)} className="cursor-pointer rounded-lg border bg-white p-6 shadow-sm hover:border-blue-500 hover:shadow-md transition-all"><h3 className="font-semibold text-lg text-gray-900">{c.name}</h3></div>))}
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">{selectedClass.name}</h2>
-                <button
-                  onClick={() => setSelectedClass(null)}
-                  className="text-sm text-blue-600 hover:text-blue-700"
-                >
-                  Choose Another Class
-                </button>
-              </div>
-              
-              <div className="divide-y divide-gray-200 rounded-lg border bg-white">
-                {studentsAttendance.map((student) => (
-                  <div key={student.id} className="flex items-center justify-between p-4">
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0">
-                        <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
-                          <span className="text-gray-600 font-medium">
-                            {student.firstName[0]}{student.lastName[0]}
-                          </span>
-                        </div>
-                      </div>
-                      <div>
-                        <h4 className="font-medium text-gray-900">
-                          {student.firstName} {student.lastName}
-                        </h4>
-                        <p className="text-sm text-gray-500">
-                          Status: {student.status.charAt(0).toUpperCase() + student.status.slice(1)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        title="Mark as present"
-                        onClick={() => handleAttendanceStatus(student.id, 'present')}
-                        className={`rounded-full p-2 ${
-                          student.status === 'present'
-                            ? 'bg-green-100 text-green-600'
-                            : 'hover:bg-green-100 hover:text-green-600'
-                        }`}
-                      >
-                        <Check className="h-5 w-5" />
-                      </button>
-                      <button
-                        title="Mark as absent"
-                        onClick={() => handleAttendanceStatus(student.id, 'absent')}
-                        className={`rounded-full p-2 ${
-                          student.status === 'absent'
-                            ? 'bg-red-100 text-red-600'
-                            : 'hover:bg-red-100 hover:text-red-600'
-                        }`}
-                      >
-                        <X className="h-5 w-5" />
-                      </button>
-                      <button
-                        title="Notify parents"
-                        onClick={() => handleNotify(student.id)}
-                        className="rounded-full p-2 hover:bg-blue-100 hover:text-blue-600"
-                      >
-                        <Bell className="h-5 w-5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between"><h2 className="text-xl font-semibold text-gray-900">{selectedClass.name}</h2><button onClick={() => setSelectedClass(null)} className="text-sm font-medium text-blue-600 hover:underline">Choose Another Class</button></div>
+              <div className="divide-y divide-gray-200 rounded-lg border bg-white shadow-sm">
+                {loadingStudents ? Array.from({ length: 5 }).map((_, i) => (<div key={i} className="p-4 flex items-center justify-between"><div className="flex items-center gap-4"><SkeletonLoader className="h-10 w-10 rounded-full" /><div className="space-y-2"><SkeletonLoader className="h-4 w-32" /><SkeletonLoader className="h-3 w-20" /></div></div><SkeletonLoader className="h-8 w-24" /></div>)) : students.map((s) => (<div key={s.id} className="flex items-center justify-between p-4"><div className="flex items-center gap-4"><div className="flex-shrink-0"><div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center"><span className="text-gray-600 font-medium">{s.firstName?.[0]}{s.lastName?.[0]}</span></div></div><div><h4 className="font-medium text-gray-900">{s.firstName} {s.lastName}</h4><p className="text-sm text-gray-500">Status: {(attendanceStatus[s.id] || 'Pending').charAt(0).toUpperCase() + (attendanceStatus[s.id] || 'Pending').slice(1)}</p></div></div><div className="flex gap-2"><button title="Mark as present" onClick={() => handleAttendanceStatus(s.id, 'present')} className={`rounded-full p-2 transition-colors ${attendanceStatus[s.id] === 'present' ? 'bg-green-100 text-green-600' : 'text-gray-400 hover:bg-green-100 hover:text-green-600'}`}><Check className="h-5 w-5" /></button><button title="Mark as absent" onClick={() => handleAttendanceStatus(s.id, 'absent')} className={`rounded-full p-2 transition-colors ${attendanceStatus[s.id] === 'absent' ? 'bg-red-100 text-red-600' : 'text-gray-400 hover:bg-red-100 hover:text-red-600'}`}><X className="h-5 w-5" /></button><button title="Notify parents" onClick={() => handleNotify(s.id)} className="rounded-full p-2 text-gray-400 hover:bg-blue-100 hover:text-blue-600 transition-colors"><Bell className="h-5 w-5" /></button></div></div>))}
               </div>
             </div>
           )}
@@ -174,119 +139,36 @@ export default function TeacherAttendance({ user }: TeacherAttendanceProps) {
   return (
     <TeacherLayout user={user}>
       <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Track and manage class attendance
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setShowTakeAttendance(true)}
-              className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              <Plus className="h-4 w-4" />
-              Take Attendance
-            </button>
-            <button className="flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              <Download className="h-4 w-4" />
-              Export
-            </button>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div><h1 className="text-2xl font-bold text-gray-900">Attendance Overview</h1><p className="mt-1 text-sm text-gray-500">Your daily attendance summary</p></div>
+          <div className="flex gap-3"><button onClick={() => setShowTakeAttendance(true)} className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 shadow-sm transition-colors"><Plus className="h-4 w-4" />Take Attendance</button></div>
+        </div>
+        
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border bg-white p-4 shadow-sm flex items-center gap-4"><div className="bg-blue-100 rounded-lg p-3"><Users className="h-6 w-6 text-blue-600" /></div><div><p className="text-sm font-medium text-gray-500">Total Classes</p><p className="text-2xl font-bold text-gray-900">{loading ? '...' : stats.totalClasses}</p></div></div>
+          <div className="rounded-xl border bg-white p-4 shadow-sm flex items-center gap-4"><div className="bg-green-100 rounded-lg p-3"><UserCheck className="h-6 w-6 text-green-600" /></div><div><p className="text-sm font-medium text-gray-500">Present Today</p><p className="text-2xl font-bold text-gray-900">{loading ? '...' : stats.presentToday}</p></div></div>
+          <div className="rounded-xl border bg-white p-4 shadow-sm flex items-center gap-4"><div className="bg-red-100 rounded-lg p-3"><UserX className="h-6 w-6 text-red-600" /></div><div><p className="text-sm font-medium text-gray-500">Absent Today</p><p className="text-2xl font-bold text-gray-900">{loading ? '...' : stats.absentToday}</p></div></div>
+          <div className="rounded-xl border bg-white p-4 shadow-sm flex items-center gap-4"><div className="bg-yellow-100 rounded-lg p-3"><Percent className="h-6 w-6 text-yellow-600" /></div><div><p className="text-sm font-medium text-gray-500">Attendance Rate</p><p className="text-2xl font-bold text-gray-900">{loading ? '...' : `${stats.attendanceRate}%`}</p></div></div>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search by class or date..."
-            className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
-
-        {/* Attendance Stats */}
-        <div className="grid gap-6 md:grid-cols-4">
-          <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">Today's Classes</h3>
-            <p className="mt-2 text-3xl font-semibold text-gray-900">4</p>
-            <p className="mt-1 text-sm text-gray-500">Classes to attend</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">Present Today</h3>
-            <p className="mt-2 text-3xl font-semibold text-green-600">85</p>
-            <p className="mt-1 text-sm text-gray-500">Students attended</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">Absent Today</h3>
-            <p className="mt-2 text-3xl font-semibold text-red-600">12</p>
-            <p className="mt-1 text-sm text-gray-500">Students missed</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">Average Rate</h3>
-            <p className="mt-2 text-3xl font-semibold text-blue-600">92%</p>
-            <p className="mt-1 text-sm text-gray-500">This semester</p>
-          </div>
-        </div>
-
-        {/* Attendance List */}
-        <div className="rounded-lg border bg-white">
-          <div className="divide-y">
-            <div className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-lg bg-green-100 p-2">
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-900">Mathematics 101</h3>
-                    <div className="flex items-center gap-4 text-sm text-gray-500">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        10:00 AM - 11:30 AM
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
-                        Today
-                      </span>
+        <div className="space-y-4">
+          <div><h3 className="text-lg font-medium text-gray-900">Today's Tasks</h3><p className="text-sm text-gray-500">A summary of your attendance tasks for today.</p></div>
+          <div className="rounded-lg border bg-white shadow-sm"><div className="divide-y divide-gray-100">
+            {loading ? Array.from({length: 2}).map((_, i)=><div key={i} className="p-4"><SkeletonLoader className="h-6 w-3/4" /></div>) : (classesWithStatus.length > 0 ? classesWithStatus.map(c => (
+                <div key={c.id} className="p-4 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`rounded-full p-2 ${c.isCompleted ? 'bg-green-100' : 'bg-orange-100'}`}>
+                      {c.isCompleted ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : <Clock className="h-5 w-5 text-orange-600" />}
                     </div>
+                    <div><p className="font-medium text-gray-800">{c.name}</p><p className="text-sm text-gray-500">{c.isCompleted ? `${c.presentCount} / ${c.totalStudents} students present` : `${c.totalStudents} students pending`}</p></div>
                   </div>
+                  <button onClick={() => { handleClassSelect(c); setShowTakeAttendance(true); }} className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${c.isCompleted ? 'bg-gray-100 text-gray-800 hover:bg-gray-200' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                    {c.isCompleted ? <Edit className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                    {c.isCompleted ? 'Edit' : 'Take Attendance'}
+                  </button>
                 </div>
-                <div className="text-sm">
-                  <div className="font-medium text-gray-900">28/30</div>
-                  <div className="text-gray-500">Students present</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-lg bg-red-100 p-2">
-                    <XCircle className="h-5 w-5 text-red-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-900">Physics 201</h3>
-                    <div className="flex items-center gap-4 text-sm text-gray-500">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        2:00 PM - 3:30 PM
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
-                        Today
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="text-sm">
-                  <div className="font-medium text-gray-900">Pending</div>
-                  <div className="text-gray-500">Not started</div>
-                </div>
-              </div>
-            </div>
-          </div>
+              )) : <p className="p-4 text-sm text-gray-500">You have no classes assigned.</p>)}
+          </div></div>
         </div>
       </div>
     </TeacherLayout>

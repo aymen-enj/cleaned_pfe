@@ -3,6 +3,7 @@ import { User } from '../../../types/auth'
 import { ParentSidebar } from './parent-sidebar'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '../../../components/ui/sidebar'
 import { Separator } from '../../../components/ui/separator'
+import { Toaster } from 'react-hot-toast'
 
 interface ParentLayoutProps {
   children: ReactNode
@@ -44,6 +45,30 @@ export const ParentLayout = ({ children, user }: ParentLayoutProps) => {
           {children}
         </main>
       </SidebarInset>
+      
+      {/* Ajout du Toaster pour les notifications */}
+      <Toaster 
+        position="bottom-right" 
+        toastOptions={{ 
+          duration: 4000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+          success: {
+            duration: 3000,
+            style: {
+              background: '#10B981',
+            },
+          },
+          error: {
+            duration: 5000,
+            style: {
+              background: '#EF4444',
+            },
+          },
+        }} 
+      />
     </SidebarProvider>
   )
-} 
+}

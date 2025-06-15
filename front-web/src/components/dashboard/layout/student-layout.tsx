@@ -3,6 +3,7 @@ import { User } from '../../../types/auth'
 import { StudentSidebar } from './student-sidebar'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '../../../components/ui/sidebar'
 import { Separator } from '../../../components/ui/separator'
+import { Toaster } from 'react-hot-toast'
 
 interface StudentLayoutProps {
   children: ReactNode
@@ -44,6 +45,29 @@ export const StudentLayout = ({ children, user }: StudentLayoutProps) => {
           {children}
         </main>
       </SidebarInset>
+      
+      <Toaster 
+        position="bottom-right" 
+        toastOptions={{ 
+          duration: 4000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+          success: {
+            duration: 3000,
+            style: {
+              background: '#10B981',
+            },
+          },
+          error: {
+            duration: 5000,
+            style: {
+              background: '#EF4444',
+            },
+          },
+        }} 
+      />
     </SidebarProvider>
   )
-} 
+}
