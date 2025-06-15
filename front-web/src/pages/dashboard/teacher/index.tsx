@@ -9,6 +9,8 @@ import {
 import { Link } from "react-router-dom"
 import { User } from "../../../types/auth"
 import { TeacherLayout } from "../../../components/dashboard/layout/teacher-layout"
+import { DashboardHeader } from '@/components/DashboardHeader'
+import { LogoutButton } from '@/components/LogoutButton'
 
 interface TeacherDashboardProps {
   user: User

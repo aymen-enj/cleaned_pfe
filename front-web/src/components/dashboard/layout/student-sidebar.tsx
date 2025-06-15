@@ -9,10 +9,13 @@ import {
   Library,
   Award,
   Clock,
-  ClipboardCheck, // Import the icon for assignments
-  HelpCircle // Import the icon for support
+  ClipboardCheck,
+  HelpCircle,
+  LogOut // Ajout de l'icône LogOut
 } from "lucide-react"
 import { Link, useLocation } from 'react-router-dom'
+import { useState } from 'react' // Ajout de useState
+import { supabase } from '../../../lib/supabaseClient' // Ajout de supabase
 
 import {
   Sidebar,
@@ -72,7 +75,7 @@ const navigation = [
     href: "/dashboard/student/assignments",
   },
   {
-    title: "Support et Assistance", // Add the new navigation item
+    title: "Support et Assistance",
     icon: HelpCircle,
     href: "/dashboard/student/support",
   },
@@ -80,6 +83,20 @@ const navigation = [
 
 export function StudentSidebar() {
   const location = useLocation()
+  const [isLoggingOut, setIsLoggingOut] = useState(false) // État pour le loading
+
+  // Fonction de déconnexion
+  const handleLogout = async () => {
+    setIsLoggingOut(true)
+    try {
+      await supabase.auth.signOut()
+      // Le onAuthStateChange dans App.tsx s'occupera du reste !
+    } catch (error) {
+      console.error('Erreur lors de la déconnexion:', error)
+    } finally {
+      setIsLoggingOut(false)
+    }
+  }
 
   return (
     <Sidebar>
@@ -98,6 +115,22 @@ export function StudentSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              
+              {/* Bouton Logout ajouté ici */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <button 
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                    className="flex items-center w-full text-red-600 hover:text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <LogOut className="h-5 w-5" />
+                    <span className="ml-3">
+                      {isLoggingOut ? 'Déconnexion...' : 'Logout'}
+                    </span>
+                  </button>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

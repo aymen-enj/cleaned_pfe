@@ -1,5 +1,6 @@
+import { supabase } from './lib/supabaseClient';
 import { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from './pages/landing';
 import { SignInPage } from './pages/auth/sign-in';
 import { SignUpPage } from './pages/auth/sign-up';
@@ -9,9 +10,8 @@ import { AdminHomePage } from './pages/dashboard/admin/home';
 import { UsersPage } from './pages/dashboard/admin/users';
 import { ClassesPage } from './pages/dashboard/admin/classes';
 import { SettingsPage } from './pages/dashboard/admin/settings';
-import { User } from './types/auth';
+import type { User, UserRole } from '@/types/auth';
 
-// Student Pages
 import StudentDashboard from './pages/dashboard/student';
 import StudentCourses from './pages/dashboard/student/courses';
 import StudentMaterials from './pages/dashboard/student/materials';
@@ -21,7 +21,7 @@ import StudentAttendance from './pages/dashboard/student/attendance';
 import StudentPayments from './pages/dashboard/student/payments';
 import StudentDocuments from './pages/dashboard/student/documents';
 import StudentAssignments from './pages/dashboard/student/assignments';
-import StudentSupport from './pages/dashboard/student/support'; // Import the new page
+import StudentSupport from './pages/dashboard/student/support';
 
 // Teacher Pages
 import TeacherDashboard from './pages/dashboard/teacher';
@@ -43,21 +43,88 @@ import ParentDocuments from './pages/dashboard/parent/documents';
 
 import DebugNav from "./pages/debug-nav";
 
+// Composant pour rediriger selon le rôle
+const RoleBasedRedirect = ({ user }: { user: User }) => {
+  switch (user.role) {
+    case 'administrator':
+      return <Navigate to="/dashboard/admin" replace />;
+    case 'teacher':
+      return <Navigate to="/dashboard/teacher" replace />;
+    case 'student':
+      return <Navigate to="/dashboard/student" replace />;
+    case 'parent':
+      return <Navigate to="/dashboard/parent" replace />;
+    default:
+      return <Navigate to="/dashboard/student" replace />;
+  }
+};
+
+// Composant pour protéger les routes
+const ProtectedRoute = ({ children, user, allowedRoles }: { 
+  children: React.ReactNode; 
+  user: User | null; 
+  allowedRoles?: UserRole[] 
+}) => {
+  if (!user) {
+    return <Navigate to="/auth/sign-in" replace />;
+  }
+  
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <RoleBasedRedirect user={user} />;
+  }
+  
+  return <>{children}</>;
+};
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // TODO: Replace this with actual authentication logic
-    // This is just a temporary mock user for demonstration
-    const mockUser: User = {
-      id: '1',
-      email: 'admin@example.com',
-      firstName: 'Admin',
-      lastName: 'User',
-      role: 'administrator',
+    const checkAndSetUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session && session.user) {
+        const validRoles: UserRole[] = ['administrator', 'teacher', 'student', 'parent'];
+        const roleFromMeta = session.user.user_metadata?.role;
+        const finalRole = validRoles.includes(roleFromMeta) ? roleFromMeta : 'student';
+
+        const transformedUser: User = {
+          id: session.user.id,
+          email: session.user.email || '',
+          firstName: session.user.user_metadata?.firstName || 'Prénom',
+          lastName: session.user.user_metadata?.lastName || 'Nom',
+          role: finalRole,
+        };
+        
+        setUser(transformedUser);
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
     };
-    setUser(mockUser);
+
+    checkAndSetUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      console.log("Changement d'état d'authentification détecté !");
+      checkAndSetUser();
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-lg">Loading...</div>
+      </div>
+    );
+  }
+
+  console.log("Rendu du composant App. Valeur de l'état 'user' :", user);
 
   return (
     <Router>
@@ -66,130 +133,251 @@ function App() {
         <Route path="/debug" element={<DebugNav />} />
 
         {/* Public Routes */}
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/auth/sign-in" element={<SignInPage />} />
-        <Route path="/auth/sign-up" element={<SignUpPage />} />
+        <Route 
+          path="/" 
+          element={user ? <RoleBasedRedirect user={user} /> : <LandingPage />} 
+        />
+        <Route 
+          path="/auth/sign-in" 
+          element={user ? <RoleBasedRedirect user={user} /> : <SignInPage />} 
+        />
+        <Route 
+          path="/auth/sign-up" 
+          element={user ? <RoleBasedRedirect user={user} /> : <SignUpPage />} 
+        />
         <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
 
         {/* Admin Routes */}
         <Route
           path="/dashboard/admin"
-          element={user ? <AdminHomePage user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['administrator']}>
+              <AdminHomePage user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/admin/users"
-          element={user ? <UsersPage user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['administrator']}>
+              <UsersPage user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/admin/classes"
-          element={user ? <ClassesPage user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['administrator']}>
+              <ClassesPage user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/admin/settings"
-          element={user ? <SettingsPage user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['administrator']}>
+              <SettingsPage user={user!} />
+            </ProtectedRoute>
+          }
         />
 
         {/* Student Routes */}
         <Route
           path="/dashboard/student"
-          element={user ? <StudentDashboard user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentDashboard user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/courses"
-          element={user ? <StudentCourses user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentCourses user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/materials"
-          element={user ? <StudentMaterials user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentMaterials user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/library"
-          element={user ? <StudentLibrary user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentLibrary user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/certificates"
-          element={user ? <StudentCertificates user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentCertificates user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/attendance"
-          element={user ? <StudentAttendance user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentAttendance user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/payments"
-          element={user ? <StudentPayments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentPayments user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/documents"
-          element={user ? <StudentDocuments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentDocuments user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/assignments"
-          element={user ? <StudentAssignments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentAssignments user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/student/support"
-          element={user ? <StudentSupport user={user} /> : <div>Loading...</div>} // Add the new route
+          element={
+            <ProtectedRoute user={user} allowedRoles={['student']}>
+              <StudentSupport user={user!} />
+            </ProtectedRoute>
+          }
         />
 
         {/* Teacher Routes */}
         <Route
           path="/dashboard/teacher"
-          element={user ? <TeacherDashboard user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherDashboard user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/classes"
-          element={user ? <TeacherClasses user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherClasses user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/materials"
-          element={user ? <TeacherMaterials user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherMaterials user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/students"
-          element={user ? <TeacherStudents user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherStudents user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/attendance"
-          element={user ? <TeacherAttendance user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherAttendance user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/assignments"
-          element={user ? <TeacherAssignments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherAssignments user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/messages"
-          element={user ? <TeacherMessages user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherMessages user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/teacher/documents"
-          element={user ? <TeacherDocuments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['teacher']}>
+              <TeacherDocuments user={user!} />
+            </ProtectedRoute>
+          }
         />
 
         {/* Parent Routes */}
         <Route
           path="/dashboard/parent"
-          element={user ? <ParentDashboard user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['parent']}>
+              <ParentDashboard user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/parent/children"
-          element={user ? <ParentChildren user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['parent']}>
+              <ParentChildren user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/parent/progress"
-          element={user ? <ParentProgress user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['parent']}>
+              <ParentProgress user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/parent/messages"
-          element={user ? <ParentMessages user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['parent']}>
+              <ParentMessages user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/parent/payments"
-          element={user ? <ParentPayments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['parent']}>
+              <ParentPayments user={user!} />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="/dashboard/parent/documents"
-          element={user ? <ParentDocuments user={user} /> : <div>Loading...</div>}
+          element={
+            <ProtectedRoute user={user} allowedRoles={['parent']}>
+              <ParentDocuments user={user!} />
+            </ProtectedRoute>
+          }
         />
       </Routes>
     </Router>

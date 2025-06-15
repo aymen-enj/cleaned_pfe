@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom' // 1. Importer useNavigate
 import type { SignUpData, UserRole } from '../../types/auth'
+import { supabase } from '@/lib/supabaseClient' // 2. Importer Supabase
 
 const signUpSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -23,24 +24,50 @@ const roles: { value: UserRole; label: string }[] = [
 
 export const SignUpPage = () => {
   const [isLoading, setIsLoading] = useState(false)
+  const navigate = useNavigate() // 3. Initialiser le hook de navigation
   const { register, handleSubmit, formState: { errors } } = useForm<SignUpData>({
     resolver: zodResolver(signUpSchema),
   })
 
+  // 4. Remplacer complètement la fonction onSubmit
   const onSubmit = async (data: SignUpData) => {
     setIsLoading(true)
     try {
-      // TODO: Implement sign up logic
-      console.log('Sign up data:', data)
+      const { error } = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+        // C'est ici que la magie opère : on passe les données additionnelles
+        options: {
+          data: {
+            firstName: data.firstName,
+            lastName: data.lastName,
+            role: data.role,
+            phoneNumber: data.phoneNumber,
+          }
+        }
+      })
+
+      if (error) {
+        // Gérer les erreurs (ex: l'email existe déjà)
+        alert('Error signing up: ' + error.message)
+      } else {
+        // Succès !
+        alert('Sign up successful! You can now sign in.');
+        navigate('/auth/sign-in'); // Rediriger l'utilisateur vers la page de connexion
+      }
+
     } catch (error) {
-      console.error('Sign up error:', error)
+      console.error('Unexpected sign up error:', error)
+      alert('An unexpected error occurred. Please try again.')
     } finally {
       setIsLoading(false)
     }
   }
 
+  // Le reste de votre fichier (le JSX) est parfait et n'a pas besoin de changer.
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      {/* ... Votre code JSX reste identique ... */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Create your account</h2>
         <p className="mt-2 text-center text-sm text-gray-600">

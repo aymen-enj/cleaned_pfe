@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Link } from 'react-router-dom'
 import type { SignInData } from '../../types/auth'
+import { supabase } from '@/lib/supabaseClient' // 1. Importer Supabase
 
 const signInSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -12,17 +13,40 @@ const signInSchema = z.object({
 
 export const SignInPage = () => {
   const [isLoading, setIsLoading] = useState(false)
-  const { register, handleSubmit, formState: { errors } } = useForm<SignInData>({
+  // Ajout de 'setError' pour afficher les erreurs de Supabase dans le formulaire
+  const { register, handleSubmit, formState: { errors }, setError } = useForm<SignInData>({
     resolver: zodResolver(signInSchema),
   })
 
   const onSubmit = async (data: SignInData) => {
     setIsLoading(true)
     try {
-      // TODO: Implement sign in logic
-      console.log('Sign in data:', data)
+      // 2. Remplacer le TODO par l'appel à Supabase
+      const { error } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      });
+
+      // 3. Gérer la réponse de Supabase
+      if (error) {
+        // Affiche une erreur générale au-dessus du formulaire si la connexion échoue
+        setError('root.serverError', { 
+          type: 'manual', 
+          message: 'Invalid login credentials. Please try again.' 
+        });
+        console.error('Supabase sign in error:', error.message);
+      } else {
+        // C'est tout ! App.tsx s'occupera du reste.
+        // La redirection sera automatique grâce au onAuthStateChange.
+      }
+
     } catch (error) {
-      console.error('Sign in error:', error)
+      // Gérer les erreurs inattendues (ex: problème réseau)
+      setError('root.serverError', {
+        type: 'manual',
+        message: 'An unexpected error occurred. Please try again later.'
+      });
+      console.error('Unexpected sign in error:', error)
     } finally {
       setIsLoading(false)
     }
@@ -43,6 +67,14 @@ export const SignInPage = () => {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
           <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
+            {/* Affichage de l'erreur générale du serveur */}
+            {errors.root?.serverError && (
+              <div className="rounded-md bg-red-50 p-4">
+                <p className="text-sm text-red-600">{errors.root.serverError.message}</p>
+              </div>
+            )}
+            
+            {/* ... le reste de votre formulaire est parfait et reste inchangé ... */}
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700">
                 Email address
