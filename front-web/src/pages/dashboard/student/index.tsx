@@ -8,6 +8,7 @@ import {
   ArrowRight
 } from "lucide-react"
 import { Link } from "react-router-dom"
+import { StudentLayout } from "../../../components/dashboard/layout/student-layout"
 import { User } from "../../../types/auth"
 
 interface StudentDashboardProps {
@@ -61,13 +62,14 @@ const features = [
 
 export default function StudentDashboard({ user }: StudentDashboardProps) {
   return (
-    <div className="p-6">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Welcome back, {user.firstName}!</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Access your courses, materials, and manage your academic journey
-        </p>
-      </div>
+    <StudentLayout user={user}>
+      <div className="p-6">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-gray-900">Welcome back, {user.firstName}!</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Access your courses, materials, and manage your academic journey
+          </p>
+        </div>
 
       {/* Quick Actions Grid */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -126,6 +128,7 @@ export default function StudentDashboard({ user }: StudentDashboardProps) {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </StudentLayout>
   )
 } 

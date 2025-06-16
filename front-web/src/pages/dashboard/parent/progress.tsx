@@ -1,305 +1,167 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { User } from "../../../types/auth";
 import { ParentLayout } from "../../../components/dashboard/layout/parent-layout";
-import { BarChart, TrendingUp, GraduationCap, BookOpen, Clock, Award, ChevronDown } from "lucide-react";
+import { BarChart, TrendingUp, BookOpen, Award, ChevronDown } from "lucide-react";
 import { Bar, Radar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, RadialLinearScale, PointElement, LineElement, Filler } from 'chart.js';
+import { supabase } from "@/lib/supabaseClient";
+import toast from "react-hot-toast";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, RadialLinearScale, PointElement, LineElement, Filler);
 
-interface ParentProgressProps {
-  user: User;
-}
-
-interface ChildData {
-  name: string;
-  performanceData: {
-    labels: string[];
-    datasets: {
-      label: string;
-      data: number[];
-      backgroundColor: string;
-    }[];
-  };
-  skillsData: {
-    labels: string[];
-    datasets: {
-      label: string;
-      data: number[];
-      backgroundColor: string;
-      borderColor: string;
-      borderWidth: number;
-    }[];
-  };
-}
-
-const childrenData: { [key: string]: ChildData } = {
-  child1: {
-    name: "John Doe",
-    performanceData: {
-      labels: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
-      datasets: [
-        {
-          label: 'Mathematics',
-          data: [85, 90, 78, 88, 92, 95, 89, 94, 91, 87, 93, 96],
-          backgroundColor: 'rgba(75, 192, 192, 0.5)',
-        },
-        {
-          label: 'Physics',
-          data: [80, 85, 82, 86, 88, 90, 85, 89, 87, 84, 90, 92],
-          backgroundColor: 'rgba(153, 102, 255, 0.5)',
-        },
-      ],
-    },
-    skillsData: {
-      labels: ['Communication', 'Problem Solving', 'Teamwork', 'Creativity', 'Leadership', 'Technical Skills'],
-      datasets: [
-        {
-          label: 'Skills',
-          data: [85, 90, 78, 88, 92, 95],
-          backgroundColor: 'rgba(255, 99, 132, 0.2)',
-          borderColor: 'rgba(255, 99, 132, 1)',
-          borderWidth: 1,
-        },
-      ],
-    },
-  },
-  child2: {
-    name: "Jane Doe",
-    performanceData: {
-      labels: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
-      datasets: [
-        {
-          label: 'Mathematics',
-          data: [78, 82, 85, 88, 90, 92, 94, 96, 89, 87, 85, 88],
-          backgroundColor: 'rgba(75, 192, 192, 0.5)',
-        },
-        {
-          label: 'Physics',
-          data: [75, 80, 85, 88, 90, 92, 94, 96, 89, 87, 85, 88],
-          backgroundColor: 'rgba(153, 102, 255, 0.5)',
-        },
-      ],
-    },
-    skillsData: {
-      labels: ['Communication', 'Problem Solving', 'Teamwork', 'Creativity', 'Leadership', 'Technical Skills'],
-      datasets: [
-        {
-          label: 'Skills',
-          data: [80, 85, 88, 90, 92, 94],
-          backgroundColor: 'rgba(255, 99, 132, 0.2)',
-          borderColor: 'rgba(255, 99, 132, 1)',
-          borderWidth: 1,
-        },
-      ],
-    },
-  },
-};
+// --- Types ---
+interface Child { id: string; first_name: string; last_name: string; }
+interface Stats { gpa: number; attendanceRate: number; completedCourses: number; awards: number; }
+interface ParentProgressProps { user: User; }
 
 const performanceOptions = {
   responsive: true,
-  plugins: {
-    legend: {
-      position: 'top' as const,
-    },
-    title: {
-      display: true,
-      text: 'Academic Performance Over the Year',
-      font: {
-        size: 16,
-      },
-    },
-  },
-  scales: {
-    y: {
-      beginAtZero: true,
-      max: 100,
-      title: {
-        display: true,
-        text: 'Percentage',
-      },
-    },
-  },
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'top' as const }, title: { display: false } },
+  scales: { y: { beginAtZero: true, max: 100 } },
 };
-
 const skillsOptions = {
   responsive: true,
-  plugins: {
-    legend: {
-      position: 'top' as const,
-    },
-    title: {
-      display: true,
-      text: 'Skills Assessment',
-      font: {
-        size: 16,
-      },
-    },
-  },
-  scales: {
-    r: {
-      angleLines: {
-        display: false,
-      },
-      suggestedMin: 0,
-      suggestedMax: 100,
-    },
-  },
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'top' as const }, title: { display: false } },
+  scales: { r: { angleLines: { display: false }, suggestedMin: 0, suggestedMax: 100 } },
 };
 
 export default function ParentProgress({ user }: ParentProgressProps) {
-  const [selectedChild, setSelectedChild] = useState<string>("child1");
+  const [children, setChildren] = useState<Child[]>([]);
+  const [selectedChildId, setSelectedChildId] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<Stats>({ gpa: 0, attendanceRate: 0, completedCourses: 0, awards: 0 });
+  const [performanceData, setPerformanceData] = useState<any>({ labels: [], datasets: [] });
+  const [skillsData, setSkillsData] = useState<any>({ labels: [], datasets: [] });
 
-  const handleChildChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedChild(event.target.value);
-  };
+  useEffect(() => {
+    const fetchChildren = async () => {
+      if (!user?.id) return;
+      setLoading(true);
+      try {
+        const { data: relations, error: relationsError } = await supabase.from('parent_child_relations').select('child_id').eq('parent_id', user.id);
+        if (relationsError) throw relationsError;
+        if (!relations || relations.length === 0) {
+          setChildren([]); setLoading(false); return;
+        }
+        const childIds = relations.map(r => r.child_id);
+        const { data: profiles, error: profilesError } = await supabase.from('profiles').select('id, first_name, last_name').in('id', childIds);
+        if (profilesError) throw profilesError;
+        setChildren(profiles || []);
+        if (profiles && profiles.length > 0) {
+          setSelectedChildId(profiles[0].id);
+        } else {
+          setLoading(false);
+        }
+      } catch (error: any) {
+        toast.error("Could not load your children's data.");
+        console.error("Error fetching children:", error);
+        setLoading(false);
+      }
+    };
+    fetchChildren();
+  }, [user.id]);
 
-  const { performanceData, skillsData } = childrenData[selectedChild];
+  useEffect(() => {
+    if (!selectedChildId) {
+        setLoading(false);
+        return;
+    }
+    const fetchChildData = async () => {
+      setLoading(true);
+      try {
+        const [attendanceResult, gradesResult, skillsResult, monthlyGradesResult] = await Promise.all([
+          supabase.from('attendance').select('status').eq('student_id', selectedChildId),
+          supabase.from('submissions').select('grade').eq('student_id', selectedChildId).not('grade', 'is', null),
+          supabase.from('skill_assessments').select('skill_name, score').eq('student_id', selectedChildId),
+          supabase.from('monthly_grades').select('month_date, average_grade, classes(name)').eq('student_id', selectedChildId).order('month_date')
+        ]);
+        
+        if (attendanceResult.error) throw attendanceResult.error;
+        if (gradesResult.error) throw gradesResult.error;
+        if (skillsResult.error) throw skillsResult.error;
+        if (monthlyGradesResult.error) throw monthlyGradesResult.error;
+
+        const attendanceData = attendanceResult.data || [];
+        const gradesData = gradesResult.data || [];
+        const totalDays = attendanceData.length;
+        const presentDays = attendanceData.filter(a => a.status === 'present').length;
+        const attendanceRate = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 100;
+        const totalGrades = gradesData.reduce((sum, item) => sum + (item.grade || 0), 0);
+        const gpa = gradesData.length > 0 ? parseFloat((totalGrades / gradesData.length / 25).toFixed(1)) : 4.0;
+        setStats(prev => ({ ...prev, attendanceRate, gpa }));
+
+        if (monthlyGradesResult.data) {
+          // helper to safely derive class name regardless of object/array/null
+          const extractClassName = (cls: any): string | undefined => {
+            if (!cls) return undefined;
+            return Array.isArray(cls) ? cls[0]?.name : cls?.name;
+          };
+          const data = monthlyGradesResult.data;
+          const labels = [...new Set(data.map(d => new Date(d.month_date).toLocaleString('fr-FR', { month: 'short' })))] as string[];
+          const subjects = [...new Set(data.map(d => extractClassName(d.classes)).filter(Boolean))] as string[];
+          const datasets = subjects.map((subject, index) => ({
+            label: subject,
+            data: labels.map(label => {
+              const monthData = data.find(d => new Date(d.month_date).toLocaleString('fr-FR', { month: 'short' }) === label && extractClassName(d.classes) === subject);
+              return monthData ? monthData.average_grade : null;
+            }),
+            backgroundColor: index === 0 ? 'rgba(75, 192, 192, 0.5)' : 'rgba(153, 102, 255, 0.5)',
+          }));
+          setPerformanceData({ labels, datasets });
+        }
+        
+        if (skillsResult.data) {
+          setSkillsData({ labels: skillsResult.data.map(s => s.skill_name), datasets: [{ label: 'Skills', data: skillsResult.data.map(s => s.score), backgroundColor: 'rgba(255, 99, 132, 0.2)', borderColor: 'rgba(255, 99, 132, 1)', borderWidth: 1 }] });
+        }
+
+      } catch (error: any) {
+        toast.error("Could not load child's progress.");
+        console.error("Error fetching child data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchChildData();
+  }, [selectedChildId]);
+
+  const selectedChildName = children.find(c => c.id === selectedChildId)?.first_name || "your child";
 
   return (
     <ParentLayout user={user}>
       <div className="p-6 space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Academic Progress</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Track your children's academic performance
-            </p>
-          </div>
+          <div><h1 className="text-2xl font-bold text-gray-900">Academic Progress</h1><p className="mt-1 text-sm text-gray-500">Track {selectedChildName}'s academic performance</p></div>
           <div className="relative">
-            <label htmlFor="childSelect" className="sr-only">Select Child</label>
-            <select
-              id="childSelect"
-              value={selectedChild}
-              onChange={handleChildChange}
-              className="appearance-none w-48 px-4 py-2 pr-8 rounded-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50 bg-white text-gray-700"
-            >
-              <option value="child1">John Doe</option>
-              <option value="child2">Jane Doe</option>
+            <select aria-label="Select Child" value={selectedChildId} onChange={(e) => setSelectedChildId(e.target.value)} className="appearance-none w-48 px-4 py-2 pr-8 rounded-md border border-gray-300 shadow-sm" disabled={loading || children.length === 0}>
+              {children.length === 0 && !loading ? (<option>No children found</option>) : (children.map(child => (<option key={child.id} value={child.id}>{child.first_name} {child.last_name}</option>)))}
             </select>
             <ChevronDown className="absolute right-3 top-3 h-4 w-4 text-gray-500 pointer-events-none" />
           </div>
         </div>
 
-        {/* Progress Stats */}
         <div className="grid gap-6 md:grid-cols-4">
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Overall GPA</h3>
-            <p className="mt-2 text-3xl font-semibold text-gray-900">3.8</p>
-            <p className="mt-1 text-sm text-gray-500">Current semester</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Attendance Rate</h3>
-            <p className="mt-2 text-3xl font-semibold text-blue-600">95%</p>
-            <p className="mt-1 text-sm text-gray-500">Academic year</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Completed Courses</h3>
-            <p className="mt-2 text-3xl font-semibold text-green-600">12</p>
-            <p className="mt-1 text-sm text-gray-500">Out of 15</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Awards</h3>
-            <p className="mt-2 text-3xl font-semibold text-purple-600">3</p>
-            <p className="mt-1 text-sm text-gray-500">Academic achievements</p>
-          </div>
+          <div className="rounded-lg border bg-white p-6 shadow-sm"><h3 className="text-sm font-medium text-gray-500">Overall GPA</h3><p className="mt-2 text-3xl font-semibold text-gray-900">{loading ? '...' : stats.gpa.toFixed(1)}</p></div>
+          <div className="rounded-lg border bg-white p-6 shadow-sm"><h3 className="text-sm font-medium text-gray-500">Attendance Rate</h3><p className="mt-2 text-3xl font-semibold text-blue-600">{loading ? '...' : `${stats.attendanceRate}%`}</p></div>
+          <div className="rounded-lg border bg-white p-6 shadow-sm"><h3 className="text-sm font-medium text-gray-500">Completed Courses</h3><p className="mt-2 text-3xl font-semibold text-green-600">{stats.completedCourses}</p></div>
+          <div className="rounded-lg border bg-white p-6 shadow-sm"><h3 className="text-sm font-medium text-gray-500">Awards</h3><p className="mt-2 text-3xl font-semibold text-purple-600">{stats.awards}</p></div>
         </div>
 
-        {/* Progress Charts */}
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Academic Performance Chart */}
           <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <BarChart className="h-5 w-5 text-blue-600" />
-              Academic Performance
-            </h2>
-            <div className="h-72">
-              <Bar options={performanceOptions} data={performanceData} />
-            </div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><BarChart className="h-5 w-5 text-blue-600" />Academic Performance</h2>
+            <div className="h-72">{loading ? <p>Loading chart...</p> : (performanceData?.datasets?.[0]?.data?.length > 0 ? <Bar options={performanceOptions} data={performanceData} /> : <p className="text-center text-gray-500 mt-16">No performance data available.</p>)}</div>
           </div>
-
-          {/* Skills Assessment Chart */}
           <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-purple-600" />
-              Skills Assessment
-            </h2>
-            <div className="h-72">
-              <Radar data={skillsData} options={skillsOptions} />
-            </div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><TrendingUp className="h-5 w-5 text-purple-600" />Skills Assessment</h2>
+            <div className="h-72">{loading ? <p>Loading chart...</p> : (skillsData?.datasets?.[0]?.data?.length > 0 ? <Radar data={skillsData} options={skillsOptions} /> : <p className="text-center text-gray-500 mt-16">No skills data available.</p>)}</div>
           </div>
         </div>
-
-        {/* Progress Cards */}
+        
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Subject Progress */}
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Subject Performance</h2>
-              <span className="text-sm text-gray-500">Current Semester</span>
-            </div>
-            <div className="mt-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <BookOpen className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-900">Mathematics</h3>
-                    <p className="text-sm text-gray-500">Advanced Calculus</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-lg font-semibold text-gray-900">A</span>
-                  <p className="text-sm text-gray-500">95%</p>
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
-                    <BookOpen className="h-5 w-5 text-purple-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-900">Physics</h3>
-                    <p className="text-sm text-gray-500">Classical Mechanics</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-lg font-semibold text-gray-900">A-</span>
-                  <p className="text-sm text-gray-500">92%</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Achievements */}
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Recent Achievements</h2>
-              <span className="text-sm text-gray-500">Last 30 days</span>
-            </div>
-            <div className="mt-4 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-yellow-100 flex items-center justify-center">
-                  <Award className="h-5 w-5 text-yellow-600" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-gray-900">Perfect Attendance</h3>
-                  <p className="text-sm text-gray-500">Achieved 100% attendance this month</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center">
-                  <TrendingUp className="h-5 w-5 text-green-600" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-gray-900">Top Performance</h3>
-                  <p className="text-sm text-gray-500">Ranked 1st in Mathematics</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <div className="rounded-lg border bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold text-gray-900">Subject Performance</h2></div><div className="mt-4 space-y-4">{/* ... */}</div></div>
+          <div className="rounded-lg border bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold text-gray-900">Recent Achievements</h2></div><div className="mt-4 space-y-4">{/* ... */}</div></div>
         </div>
       </div>
     </ParentLayout>
