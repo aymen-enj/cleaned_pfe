@@ -50,7 +50,7 @@ type CorrectionData = z.infer<typeof correctionSchema>;
 interface TeacherAssignmentsProps { user: User; }
 
 export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
-  // --- États ---
+  // --- State ---
   const [activeTab, setActiveTab] = useState<'assignments' | 'exams' | 'evaluations'>("assignments");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -61,7 +61,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
   const [selectedAssignment, setSelectedAssignment] = useState<AssignmentFromDB | null>(null);
   const [selectedClass, setSelectedClass] = useState<string>('all');
 
-  // Formulaires
+  // Forms
   const createForm = useForm<CreateAssignmentData>({ resolver: zodResolver(createAssignmentSchema) });
   const correctionForm = useForm<CorrectionData>({ resolver: zodResolver(correctionSchema) });
 
@@ -70,7 +70,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
   const correctionAttachmentFile = correctionForm.watch("correctionFile");
   const selectedCorrectionFileName = correctionAttachmentFile && correctionAttachmentFile.length > 0 ? correctionAttachmentFile[0].name : null;
 
-  // --- Chargement des données ---
+  // --- Data loading ---
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
@@ -86,7 +86,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
         .eq('teacher_id', user.id);
 
       if (assignmentsError || classesError) {
-        toast.error("Erreur de chargement.");
+        toast.error("Loading error.");
       } else {
         const transformedAssignments = (assignmentsData || []).map((a: any) => ({
           ...a,
@@ -119,11 +119,11 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
     fetchData();
   }, [showCreateModal, showCorrectionModal, user.id]);
 
-  // --- Fonctions de soumission ---
+  // --- Submission functions ---
   const onCreateAssignment = async (data: CreateAssignmentData) => {
-    const toastId = toast.loading('Création en cours...');
+    const toastId = toast.loading('Creating...');
     try {
-      let attachmentUrl: string | null = null;
+      let attachmentPath: string | null = null;
       const file = data.attachment?.[0];
       
       if (file) {
@@ -133,34 +133,47 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
           .upload(filePath, file);
         
         if (uploadError) throw uploadError;
-        
-        const { data: urlData } = supabase.storage
-          .from('assignmentsattachments')
-          .getPublicUrl(filePath);
-        
-        attachmentUrl = urlData?.publicUrl || null;
+        attachmentPath = filePath;
       }
 
-      const { error: insertError } = await supabase
-        .from('assignments')
-        .insert({ 
-          title: data.title, 
-          type: data.type, 
-          class_id: data.class_id, 
-          instructions: data.instructions, 
-          due_date: data.due_date, 
-          max_points: data.max_points, 
-          attachment_url: attachmentUrl, 
-          teacher_id: user.id 
-        });
+      const { data: inserted, error: insertError } = await supabase
+         .from('assignments')
+         .insert({ 
+           title: data.title, 
+           type: data.type, 
+           class_id: data.class_id, 
+           instructions: data.instructions, 
+           due_date: data.due_date, 
+           max_points: data.max_points, 
+           attachment_path: attachmentPath, 
+           teacher_id: user.id,
+           status: 'pending'
+         })
+         .select('id,title,due_date,type,class_id,status,classes(name)')
+         .single();
 
-      if (insertError) throw insertError;
-      
-      toast.success("Évaluation créée !", { id: toastId });
-      setShowCreateModal(false);
-      createForm.reset();
+       if (insertError) throw insertError;
+
+       // Optimistically update UI
+       if (inserted) {
+         const newAssignment = {
+           ...inserted,
+           status: 'pending',
+           classes: Array.isArray(inserted.classes) ? inserted.classes[0] : inserted.classes,
+         } as AssignmentFromDB;
+         setAllAssignments(prev => [...prev, newAssignment]);
+         setStats(prev => ({
+           ...prev,
+           total: prev.total + 1,
+           toGrade: prev.toGrade + 1,
+         }));
+       }
+       
+       toast.success("Assignment created!", { id: toastId });
+       setShowCreateModal(false);
+       createForm.reset();
     } catch (error: any) {
-      toast.error("Erreur: " + error.message, { id: toastId });
+      toast.error("Error: " + error.message, { id: toastId });
     }
   };
 
@@ -172,7 +185,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
   const onCorrectAssignment = async (data: CorrectionData) => {
     if (!selectedAssignment) return;
     
-    const toastId = toast.loading('Enregistrement...');
+    const toastId = toast.loading('Saving...');
     try {
       const file = data.correctionFile[0];
       const filePath = `${user.id}/corrections/${selectedAssignment.id}/${file.name}`;
@@ -196,16 +209,24 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
         .eq('id', selectedAssignment.id);
       
       if (updateError) throw updateError;
+
+      // Update local state
+      setAllAssignments(prev => prev.map(a => a.id === selectedAssignment.id ? { ...a, status: 'corrected' } : a));
+      setStats(prev => ({
+        ...prev,
+        toGrade: prev.toGrade - 1,
+        completed: prev.completed + 1,
+      }));
       
-      toast.success("Correction enregistrée !", { id: toastId });
+      toast.success("Correction saved!", { id: toastId });
       setShowCorrectionModal(false);
       correctionForm.reset();
     } catch (error: any) {
-      toast.error("Erreur: " + error.message, { id: toastId });
+      toast.error("Error: " + error.message, { id: toastId });
     }
   };
 
-  // Filtrage des assignments
+  // Assignment filtering
   const filteredAssignments = allAssignments.filter(a => {
     if (selectedClass !== 'all' && a.class_id !== selectedClass) {
       return false;
@@ -224,21 +245,21 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
           <Search className="h-5 w-5" />
         </div>
         <div>
-          <h3 className="font-medium text-gray-900">Filtrer par classe</h3>
-          <p className="text-sm text-gray-500">Afficher les évaluations d'une classe spécifique</p>
+          <h3 className="font-medium text-gray-900">Filter by class</h3>
+          <p className="text-sm text-gray-500">Show assignments for a specific class</p>
         </div>
       </div>
-      <label htmlFor="class-filter-select" className="sr-only">Filtrer par classe</label>
+      <label htmlFor="class-filter-select" className="sr-only">Filter by class</label>
       <select
         id="class-filter-select"
-        aria-label="Filtrer par classe"
+        aria-label="Filter by class"
         value={selectedClass}
         onChange={(e) => setSelectedClass(e.target.value)}
         className="block w-full sm:w-64 rounded-md border-gray-300 shadow-sm
         focus:border-blue-500 focus:ring-blue-500
         bg-white py-2 pl-3 pr-10 text-sm"
       >
-        <option value="all">Toutes les classes</option>
+        <option value="all">All classes</option>
         {teacherClasses.map((classe) => (
           <option key={classe.id} value={classe.id}>
             {classe.name}
@@ -253,15 +274,15 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
       <div className="p-6 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Gestion des évaluations</h1>
-            <p className="mt-1 text-sm text-gray-500">Créez, assignez et gérez les évaluations de vos classes</p>
+            <h1 className="text-2xl font-bold text-gray-900">Assignments Management</h1>
+            <p className="mt-1 text-sm text-gray-500">Create, assign, and manage assignments for your classes</p>
           </div>
           <div className="flex gap-2">
             <button 
               onClick={() => setShowCreateModal(true)} 
               className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
-              <Plus className="h-4 w-4"/>Créer
+              <Plus className="h-4 w-4"/>Create
             </button>
           </div>
         </div>
@@ -273,7 +294,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
               className={`px-1 py-4 text-sm font-medium ${activeTab === "assignments" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
             >
               <span className="flex items-center gap-2">
-                <ClipboardCheck className="h-4 w-4"/>Devoirs
+                <ClipboardCheck className="h-4 w-4"/>Assignments
               </span>
             </button>
             <button 
@@ -281,7 +302,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
               className={`px-1 py-4 text-sm font-medium ${activeTab === "exams" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
             >
               <span className="flex items-center gap-2">
-                <FileText className="h-4 w-4"/>Contrôles & Examens
+                <FileText className="h-4 w-4"/>Tests & Exams
               </span>
             </button>
             <button 
@@ -289,7 +310,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
               className={`px-1 py-4 text-sm font-medium ${activeTab === "evaluations" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
             >
               <span className="flex items-center gap-2">
-                <BarChart className="h-4 w-4"/>Évaluations
+                <BarChart className="h-4 w-4"/>Evaluations
               </span>
             </button>
           </nav>
@@ -303,15 +324,15 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
             <p className="mt-2 text-3xl font-semibold text-gray-900">{loading ? '...' : stats.total}</p>
           </div>
           <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">À corriger</h3>
+            <h3 className="text-sm font-medium text-gray-500">To grade</h3>
             <p className="mt-2 text-3xl font-semibold text-yellow-600">{loading ? '...' : stats.toGrade}</p>
           </div>
           <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">Complétés</h3>
+            <h3 className="text-sm font-medium text-gray-500">Completed</h3>
             <p className="mt-2 text-3xl font-semibold text-green-600">{loading ? '...' : stats.completed}</p>
           </div>
           <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-sm font-medium text-gray-500">À échéance proche</h3>
+            <h3 className="text-sm font-medium text-gray-500">Due soon</h3>
             <p className="mt-2 text-3xl font-semibold text-red-600">{loading ? '...' : stats.dueSoon}</p>
           </div>
         </div>
@@ -319,7 +340,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
         <div className="rounded-lg border bg-white overflow-hidden">
           <div className="divide-y">
             {loading ? (
-              <p className="p-4 text-center">Chargement...</p>
+              <p className="p-4 text-center">Loading...</p>
             ) : filteredAssignments.length > 0 ? (
               filteredAssignments.map(assignment => (
                 <AssignmentItem 
@@ -329,18 +350,18 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                 />
               ))
             ) : (
-              <p className="p-6 text-center text-gray-500">Aucun élément à afficher dans cette catégorie.</p>
+              <p className="p-6 text-center text-gray-500">No items to display in this category.</p>
             )}
           </div>
         </div>
 
-        {/* Modal de création */}
+        {/* Create Modal */}
         {showCreateModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold">Créer une nouvelle évaluation</h2>
-                <button aria-label="Fermer" onClick={() => setShowCreateModal(false)}>
+                <h2 className="text-xl font-bold">Create a new assignment</h2>
+                <button aria-label="Close" onClick={() => setShowCreateModal(false)}>
                   <XCircle />
                 </button>
               </div>
@@ -353,9 +374,9 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                     {...createForm.register('type')} 
                     className="w-full rounded-lg border border-gray-300 py-2 px-3"
                   >
-                    <option value="devoir">Devoir</option>
-                    <option value="controle_examen">Contrôle / Examen</option>
-                    <option value="evaluation">Évaluation</option>
+                    <option value="devoir">Assignment</option>
+                    <option value="controle_examen">Test / Exam</option>
+                    <option value="evaluation">Evaluation</option>
                   </select>
                   {createForm.formState.errors.type && (
                     <p className="text-red-600 text-sm mt-1">{createForm.formState.errors.type.message}</p>
@@ -363,7 +384,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                 </div>
                 
                 <div>
-                  <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-1">Titre</label>
+                  <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-1">Title</label>
                   <input 
                     id="title" 
                     {...createForm.register('title')} 
@@ -375,13 +396,13 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                 </div>
                 
                 <div>
-                  <label htmlFor="class_id" className="block text-sm font-medium text-gray-700 mb-1">Classe</label>
+                  <label htmlFor="class_id" className="block text-sm font-medium text-gray-700 mb-1">Class</label>
                   <select 
                     id="class_id" 
                     {...createForm.register('class_id')} 
                     className="w-full rounded-lg border border-gray-300 py-2 px-3"
                   >
-                    <option value="">-- Sélectionnez --</option>
+                    <option value="">-- Select --</option>
                     {teacherClasses.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
@@ -401,7 +422,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                 </div>
                 
                 <div>
-                  <label htmlFor="due_date" className="block text-sm font-medium text-gray-700 mb-1">Date d'échéance</label>
+                  <label htmlFor="due_date" className="block text-sm font-medium text-gray-700 mb-1">Due date</label>
                   <input 
                     id="due_date" 
                     type="datetime-local" 
@@ -424,7 +445,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                 </div>
                 
                 <div>
-                  <label htmlFor="attachment" className="block text-sm font-medium text-gray-700 mb-1">Pièce jointe</label>
+                  <label htmlFor="attachment" className="block text-sm font-medium text-gray-700 mb-1">Attachment</label>
                   <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
                     <div className="space-y-1 text-center">
                       {selectedFileName ? (
@@ -432,7 +453,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                           <FileCheck className="mx-auto h-12 w-12 text-green-500" />
                           <p className="mt-2 text-sm text-gray-900 font-medium truncate">{selectedFileName}</p>
                           <label htmlFor="attachment" className="mt-2 cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-500">
-                            Changer
+                            Change
                           </label>
                           <input 
                             id="attachment" 
@@ -446,7 +467,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                           <Upload className="mx-auto h-12 w-12 text-gray-400" />
                           <div className="flex text-sm text-gray-600">
                             <label htmlFor="attachment" className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500">
-                              <span>Télécharger</span>
+                              <span>Upload</span>
                               <input 
                                 id="attachment" 
                                 type="file" 
@@ -454,7 +475,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                                 {...createForm.register("attachment")} 
                               />
                             </label>
-                            <p className="pl-1">ou glissez-déposez</p>
+                            <p className="pl-1">or drag and drop</p>
                           </div>
                         </>
                       )}
@@ -468,13 +489,13 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                     onClick={() => setShowCreateModal(false)} 
                     className="rounded-md border border-gray-300 px-4 py-2 text-sm"
                   >
-                    Annuler
+                    Cancel
                   </button>
                   <button 
                     type="submit" 
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white"
                   >
-                    Créer
+                    Create
                   </button>
                 </div>
               </form>
@@ -482,25 +503,25 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
           </div>
         )}
 
-        {/* Modal de correction */}
+        {/* Correction Modal */}
         {showCorrectionModal && selectedAssignment && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold">Ajouter une Correction</h2>
-                <button aria-label="Fermer" onClick={() => setShowCorrectionModal(false)}>
+                <h2 className="text-xl font-bold">Add a Correction</h2>
+                <button aria-label="Close" onClick={() => setShowCorrectionModal(false)}>
                   <XCircle />
                 </button>
               </div>
               
               <p className="text-sm text-gray-600 mb-4">
-                Pour : <span className="font-medium">{selectedAssignment.title}</span>
+                For: <span className="font-medium">{selectedAssignment.title}</span>
               </p>
               
               <form onSubmit={correctionForm.handleSubmit(onCorrectAssignment)} className="space-y-4">
                 <div>
                   <label htmlFor="correctionFile" className="block text-sm font-medium text-gray-700 mb-1">
-                    Fichier de correction
+                    Correction file
                   </label>
                   <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
                     {selectedCorrectionFileName ? (
@@ -513,7 +534,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                           htmlFor="correctionFile" 
                           className="mt-2 cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-500"
                         >
-                          Changer
+                          Change
                         </label>
                         <input 
                           id="correctionFile" 
@@ -529,7 +550,7 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                           htmlFor="correctionFile" 
                           className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500"
                         >
-                          <span>Télécharger</span>
+                          <span>Upload</span>
                           <input 
                             id="correctionFile" 
                             type="file" 
@@ -553,13 +574,13 @@ export default function TeacherAssignments({ user }: TeacherAssignmentsProps) {
                     onClick={() => setShowCorrectionModal(false)} 
                     className="rounded-md border border-gray-300 px-4 py-2 text-sm"
                   >
-                    Annuler
+                    Cancel
                   </button>
                   <button 
                     type="submit" 
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white"
                   >
-                    Enregistrer
+                    Save
                   </button>
                 </div>
               </form>
@@ -607,10 +628,10 @@ const AssignmentItem = ({
           <div>
             <h3 className="font-medium text-gray-900">{assignment.title}</h3>
             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
-              <span>{assignment.classes?.name || 'Classe non assignée'}</span>
+              <span>{assignment.classes?.name || 'Unassigned class'}</span>
               <span className="flex items-center gap-1">
                 <Calendar className="h-4 w-4"/>
-                Dû le {new Date(assignment.due_date).toLocaleDateString('fr-FR')}
+                Due on {new Date(assignment.due_date).toLocaleDateString('en-GB')}
               </span>
             </div>
           </div>
@@ -620,18 +641,18 @@ const AssignmentItem = ({
           {assignment.status === 'corrected' ? (
             <span className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-1 text-sm font-medium text-green-700">
               <CheckCircle className="h-4 w-4" />
-              Corrigé
+              Graded
             </span>
           ) : (
             <button 
               onClick={onGradeClick} 
               className="rounded-md bg-blue-50 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-100"
             >
-              Corriger
+              Grade
             </button>
           )}
           <button className="rounded-md bg-gray-50 px-3 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100">
-            Détails
+            Details
           </button>
         </div>
       </div>
