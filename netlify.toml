@@ -1,0 +1,19 @@
+# Netlify configuration for deploying only the front-web sub-folder
+# Docs: https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  # Sub-directory containing the front-end project
+  base = "front-web"
+  # Build command declared in front-web/package.json
+  command = "npm run build"
+  # Relative publish directory produced by Vite
+  publish = "dist"
+
+[build.environment]
+  # Uncomment and add any required environment variables here, e.g. SUPABASE_URL
+  # SUPABASE_URL = "https://your-project.supabase.co"
+  # SUPABASE_ANON_KEY = "public-anon-key"
+
+# Enable automatic Node version detection or pin an explicit version:
+# [build]
+#   node_version = "18"
