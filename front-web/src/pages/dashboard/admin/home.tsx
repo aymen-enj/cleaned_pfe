@@ -5,12 +5,20 @@ import { AttendanceSummaryChart } from '../../../components/dashboard/charts/att
 import { QuickStatsSection } from '../../../components/dashboard/sections/quick-stats-section'
 import { RecentActivitiesSection } from '../../../components/dashboard/sections/recent-activities-section'
 import { User } from '../../../types/auth'
+import { supabase } from '@/lib/supabaseClient'
+import { useNavigate } from 'react-router-dom'
 
 interface AdminHomePageProps {
   user: User
 }
 
 export const AdminHomePage = ({ user }: AdminHomePageProps) => {
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/login');
+  }
   const quickStats = [
     {
       title: 'Total Students',
@@ -94,11 +102,14 @@ export const AdminHomePage = ({ user }: AdminHomePageProps) => {
   return (
     <DashboardLayout user={user}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Overview of your school's performance and recent activities
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+            <p className="mt-1 text-sm text-gray-500">Overview of your school's performance and recent activities</p>
+          </div>
+          <button onClick={handleSignOut} className="inline-flex items-center rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500">
+            Sign out
+          </button>
         </div>
 
         {/* Quick Stats Section */}
